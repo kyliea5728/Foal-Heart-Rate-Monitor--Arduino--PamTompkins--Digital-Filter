@@ -3,26 +3,24 @@
 #include <Arduino_LSM6DSOX.h>
 #include "thingProperties.h"
 
+//For HeartRate Monitoring
 #define SAMPLINGRATE 800 //Hz
 #define SAMPLINGPERIOD 1.3 //ms (1/SAMPLINGRATE)
 #define ECG_PIN A7
 #define REFRACTORY 300 // period to wait before another R-wave is possible (ms). Reduces double counting of peaks 
-
 // Pan-Tompkins parameters
 //const int windowSize = 77; // May need tuning -> QRS duration estimated 100ms -> QRS duration(ms)/SAMPLINGPERIOD(ms)
 //float integratedSignal[windowSize] = {0}; //buffer to hold values
 float threshold = 0.3; // Needs to be tuned according to actual QRS amplitude
 long lastRPeakTime = 0; //used to store the timestamp of the last detected R-peak. Initially set to 0
-
 const int N = 2; //filter order 
-
 //Notch filter coefficients 
 float a[] = {1, -1.71596743185558, 0.924390491658207};
 float b[] = {0.962195245829104	-1.71596743185558	0.962195245829104};
-
 // Arrays for past samples
 float x[N+1] = {0};
 float y[N+1] = {0};
+unsigned long lastSampleTime = 0; // Variable to store the last time a sample was taken, ensures correct sampling period
 
 //For Battery Tracking
 const int analogPinBattery = A5;
@@ -52,6 +50,8 @@ void setup() {
   Serial.println("Started");
   delay(1000);
 
+  lastSampleTime = millis(); //for heartrate monitoring
+
   StartTime = micros(); //for battery tracking
 
 //for respiratory
@@ -77,38 +77,39 @@ void setup() {
 ///////////////////////////////////////
 void loop() {
   // put your main code here, to run repeatedly:
- unsigned long startTime = millis();
+     unsigned long currentMillis = millis();
+    
+    //Heart Rate
+    // Check if it's time to sample again for heart rate
+    if (currentMillis - lastSampleTime >= SAMPLINGPERIOD) {
+        lastSampleTime = currentMillis; // Update the last sampled time
 
-      // Get the current ECG sample
-        float ECG = (analogRead(ECG_PIN) * 3.3)/1023;
+        // Get the current ECG sample
+        float ECG = (analogRead(ECG_PIN) * 3.3) / 1023;
 
         // Apply the notch filter to the ECG sample
         float filteredECG = filter(ECG);
 
-        // Apply Pan-Tompkins for QRS detection
+        // Apply QRS detection
         if (detectQRS(filteredECG)) {
-            float heartRate = calculateHeartRate(millis());
+            float heartRate = calculateHeartRate(millis()); 
             Serial.println(" ");
             Serial.print("Heart Rate: ");
             Serial.print(heartRate);
             Serial.println(" BPM");
         }
-        unsigned long endTime = millis();
-        unsigned long elapsedTime = endTime - startTime;
+    }
+    //Print Statements for testing signal after being filtered
+    //Serial.print(filteredECG);
+    //Serial.print("     ");
 
-        if (elapsedTime < SAMPLINGPERIOD) { //account for the time that has elapsed during program execution when sampling
-            delay(SAMPLINGPERIOD - elapsedTime);
-        }
+    //Battery Tracking
+    if ((micros() - StartTime) >= 1000000){
+        StartTime = micros();
+        BatteryTracking();
+      }
 
-        if ((micros() - StartTime) >= 1000000){
-            StartTime = micros();
-            BatteryTracking();
-        }
-
-      //Print Statements for testing signal after being filtered
-      //Serial.print(filteredECG);
-      //Serial.print("     ");
-
+      //Respiratory
       if (peakDetected) {
             float frequency =1000000.0 / peakInterval; 
               if (frequency < 10){
